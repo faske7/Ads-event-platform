@@ -1,0 +1,20 @@
+[project]
+name = "ads-event-platform"
+version = "0.1.0"
+description = "MVP Ads event platform based on DESIGN.md"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "django>=5.0,<6.0",
+]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings"
+python_files = ["tests.py", "test_*.py", "*_tests.py"]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["config*", "ads_platform*"]
