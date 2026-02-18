@@ -8,7 +8,7 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from ads_platform.models import Campaign, Creative, LineItem, Placement, Tenant
+from backend.ads_platform.models import Campaign, Creative, LineItem, Placement, Tenant
 
 
 class AdsPlatformApiTests(TestCase):
