@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.urls import path
 
-from backend.ads_platform import decision_view, events_view, report_summary_view
+from ads_platform.views import decision_view, events_view, report_summary_view
 
 urlpatterns = [
     path("admin/", admin.site.urls),
