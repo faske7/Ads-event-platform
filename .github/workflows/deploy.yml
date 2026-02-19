@@ -1,0 +1,60 @@
+name: CI/CD - Docker Build & Deploy
+
+on:
+  push:
+    branches:
+      - main  # триггер срабатывает на пуш в ветку main
+
+env:
+  IMAGE_NAME: faske7/ads-platform
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: SECRETS
+
+
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v3
+
+
+
+    - name: 🔐 Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: 🛠 Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+
+    - name: 🐳 Build and push Docker image (cached)
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: ./Dockerfile
+        push: true
+        pull: true
+        no-cache: true
+        tags: |
+          ${{ env.IMAGE_NAME }}:latest
+          ${{ env.IMAGE_NAME }}:${{ github.sha }}
+        build-args: |
+          INSTALL_DEV=false
+        cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:cache
+        cache-to: type=registry,ref=${{ env.IMAGE_NAME }}:cache,mode=max
+
+    - name: 🚀 Deploy via SSH
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host: ${{ secrets.SERVER_HOST }}
+        username: ${{ secrets.SERVER_USER }}
+        key: ${{ secrets.SERVER_SSH_KEY }}
+        script: |
+          cd /home
+          docker pull ${{ env.IMAGE_NAME }}:${{ github.sha }} || true
+          docker pull ${{ env.IMAGE_NAME }}:latest || true
+          docker compose pull
+          docker compose up -d --remove-orphans --pull always --force-recreate
