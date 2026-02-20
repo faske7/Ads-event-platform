@@ -2,7 +2,7 @@ import json
 
 from django.core.management.base import BaseCommand
 
-from backend.ads_platform.services import get_consumer, parse_event, process_event
+from ads_platform.services import get_consumer, parse_event, process_event
 
 
 class Command(BaseCommand):

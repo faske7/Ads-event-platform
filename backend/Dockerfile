@@ -11,7 +11,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 # Install Poetry
-ENV POETRY_VERSION=1.8.3
+ENV POETRY_VERSION=2.2.1
 ENV POETRY_NO_INTERACTION=1
 ENV POETRY_VIRTUALENVS_CREATE=false
 ENV PYTHONUNBUFFERED=1
@@ -23,8 +23,8 @@ RUN curl -sSL https://install.python-poetry.org | python - \
 COPY ../pyproject.toml ../poetry.lock* ./
 
 # Install deps (skip installing the project itself to avoid packaging issues)
-RUN poetry lock --no-update --no-ansi
-RUN poetry install --no-ansi --no-root
+RUN poetry lock
+RUN poetry install
 
 # Copy the rest of the app
 COPY . .

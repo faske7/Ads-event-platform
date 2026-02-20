@@ -82,10 +82,10 @@ services:
     command: >
       sh -c "
         cd backend && python manage.py migrate &&
-        gunicorn ads_platform.wsgi:application --bind 0.0.0.0:8000
+        gunicorn config.wsgi:application --bind 0.0.0.0:8000
       "
     environment:
-      DJANGO_SETTINGS_MODULE: ads_platform.settings
+      DJANGO_SETTINGS_MODULE: config.settings
       # Postgres
       DATABASE_URL: postgres://ads_user:ads_password@postgres:5432/ads_db
       # Kafka
@@ -115,10 +115,10 @@ services:
     container_name: ads-backend-worker
     command: >
       sh -c "
-        python manage.py consume_events
+        cd backend && python manage.py consume_events
       "
     environment:
-      DJANGO_SETTINGS_MODULE: ads_platform.settings
+      DJANGO_SETTINGS_MODULE: config.settings
       DATABASE_URL: postgres://ads_user:ads_password@postgres:5432/ads_db
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       CLICKHOUSE_HOST: clickhouse
