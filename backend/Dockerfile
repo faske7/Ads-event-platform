@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-WORKDIR /app
+WORKDIR /backend
 
 # System deps (common ones for building wheels like psycopg/cryptography, etc.)
 RUN apt-get update \
