@@ -15,6 +15,17 @@ from django.utils.dateparse import parse_datetime
 
 from .models import Campaign, Creative, LineItem, MinuteAdAggregate, Placement, RawAdEvent
 
+try:
+    from confluent_kafka import Consumer, Producer
+except Exception:  # pragma: no cover - optional in constrained environments
+    Consumer = None
+    Producer = None
+
+try:
+    import redis
+except Exception:  # pragma: no cover - optional in constrained environments
+    redis = None
+
 
 class ValidationError(Exception):
     pass
@@ -78,11 +89,43 @@ def parse_event(payload: dict[str, Any]) -> AdEvent:
 
 
 _EVENT_QUEUE: deque[str] = deque()
+_REDIS_CLIENT = None
+
+
+def _redis_client():
+    global _REDIS_CLIENT
+    if _REDIS_CLIENT is not None:
+        return _REDIS_CLIENT
+    if not settings.REDIS_URL or redis is None:
+        return None
+    try:
+        _REDIS_CLIENT = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+        _REDIS_CLIENT.ping()
+    except Exception:
+        _REDIS_CLIENT = None
+    return _REDIS_CLIENT
 
 
 class LocalKafkaProducer:
     def produce_event(self, event: AdEvent) -> None:
         _EVENT_QUEUE.append(json.dumps(event.__dict__, default=str))
+
+
+class KafkaProducerAdapter:
+    def __init__(self):
+        if Producer is None:
+            raise ValidationError("confluent-kafka is not available")
+        self._topic = settings.KAFKA_TOPIC_EVENTS
+        self._producer = Producer({"bootstrap.servers": settings.KAFKA_BOOTSTRAP_SERVERS})
+
+    def produce_event(self, event: AdEvent) -> None:
+        payload = json.dumps(event.__dict__, default=str)
+        self._producer.produce(
+            self._topic,
+            payload.encode("utf-8"),
+            key=str(event.tenant_id).encode("utf-8"),
+        )
+        self._producer.flush(5)
 
 
 class LocalKafkaConsumer:
@@ -93,17 +136,91 @@ class LocalKafkaConsumer:
         return rows
 
 
-def get_producer() -> LocalKafkaProducer:
+class KafkaConsumerAdapter:
+    def __init__(self):
+        if Consumer is None:
+            raise ValidationError("confluent-kafka is not available")
+        self._consumer = Consumer(
+            {
+                "bootstrap.servers": settings.KAFKA_BOOTSTRAP_SERVERS,
+                "group.id": settings.KAFKA_CONSUMER_GROUP,
+                "auto.offset.reset": "earliest",
+                "enable.auto.commit": False,
+            }
+        )
+        self._consumer.subscribe([settings.KAFKA_TOPIC_EVENTS])
+
+    def poll(self, batch_size: int = 100) -> list[str]:
+        rows: list[str] = []
+        for _ in range(batch_size):
+            msg = self._consumer.poll(timeout=0.2)
+            if msg is None:
+                break
+            if msg.error():
+                continue
+            rows.append(msg.value().decode("utf-8"))
+            self._consumer.commit(msg)
+        return rows
+
+
+def get_producer() -> LocalKafkaProducer | KafkaProducerAdapter:
+    if settings.KAFKA_BOOTSTRAP_SERVERS:
+        try:
+            return KafkaProducerAdapter()
+        except Exception:
+            return LocalKafkaProducer()
     return LocalKafkaProducer()
 
 
-def get_consumer() -> LocalKafkaConsumer:
+def get_consumer() -> LocalKafkaConsumer | KafkaConsumerAdapter:
+    if settings.KAFKA_BOOTSTRAP_SERVERS:
+        try:
+            return KafkaConsumerAdapter()
+        except Exception:
+            return LocalKafkaConsumer()
     return LocalKafkaConsumer()
+
+
+def _dedup_add(key: str, timeout: int) -> bool:
+    client = _redis_client()
+    if client is not None:
+        try:
+            return bool(client.set(key, 1, nx=True, ex=timeout))
+        except Exception:
+            pass
+    return bool(cache.add(key, 1, timeout=timeout))
+
+
+def _counter_get(key: str) -> int:
+    client = _redis_client()
+    if client is not None:
+        try:
+            value = client.get(key)
+            return int(value or 0)
+        except Exception:
+            pass
+    return int(cache.get(key, 0))
+
+
+def _counter_incr_with_ttl(key: str, ttl_seconds: int) -> int:
+    client = _redis_client()
+    if client is not None:
+        try:
+            pipeline = client.pipeline()
+            pipeline.incr(key)
+            pipeline.expire(key, ttl_seconds)
+            value, _ = pipeline.execute()
+            return int(value)
+        except Exception:
+            pass
+    value = int(cache.get(key, 0)) + 1
+    cache.set(key, value, timeout=ttl_seconds)
+    return value
 
 
 def process_event(event: AdEvent) -> bool:
     dedup_key = f"ad_event:{event.event_id}"
-    if not cache.add(dedup_key, 1, timeout=settings.EVENT_DEDUP_TTL_SECONDS):
+    if not _dedup_add(dedup_key, timeout=settings.EVENT_DEDUP_TTL_SECONDS):
         return False
 
     RawAdEvent.objects.create(
@@ -221,7 +338,7 @@ def decide_ad(tenant_id: int, placement_key: str, user_id: str, context: dict[st
         if line_item.targeting_json and not _matches_targeting(line_item.targeting_json, context):
             continue
         cap_key = f"fc:{tenant_id}:{line_item.campaign_id}:{user_id}"
-        current = cache.get(cap_key, 0)
+        current = _counter_get(cap_key)
         if current >= settings.FREQUENCY_CAP_PER_CAMPAIGN_PER_DAY:
             continue
         creatives = list(line_item.creatives.all())
@@ -237,7 +354,7 @@ def decide_ad(tenant_id: int, placement_key: str, user_id: str, context: dict[st
     creative = random.choice(creatives)
 
     cap_key = f"fc:{tenant_id}:{selected.campaign_id}:{user_id}"
-    cache.set(cap_key, int(cache.get(cap_key, 0)) + 1, timeout=60 * 60 * 24)
+    _counter_incr_with_ttl(cap_key, ttl_seconds=60 * 60 * 24)
 
     return {
         "campaign_id": selected.campaign_id,

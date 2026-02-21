@@ -14,6 +14,10 @@ MVP implementation based on `docs/DESIGN.md`.
   - deduplicates by `event_id`
   - stores raw events
   - updates minute-level aggregates
+- Infrastructure integration:
+  - Kafka producer/consumer via `confluent-kafka` when `KAFKA_BOOTSTRAP_SERVERS` is set
+  - Redis dedup/frequency cap via `REDIS_URL`
+  - Automatic in-memory fallback for local tests/dev when Kafka/Redis are unavailable
 
 ## Quickstart
 
